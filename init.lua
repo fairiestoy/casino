@@ -17,7 +17,7 @@ end
 
 casino = {}
 
-casino.__version = 67849
+casino.__version = 136457
 
 function casino.get_version( )
 	return casino.__version
@@ -50,6 +50,14 @@ if minetest.get_modpath( 'money2' ) then
 			return true
 		end
 	end
+
+	function casino.pay_user( name, amount )
+		if money.add( name, amount ) then
+			return false
+		else
+			return true
+		end
+	end
 else
 	function casino.charge_user( name, amount )
 		if not money.accounts[name] or money.accounts[name].money then
@@ -64,75 +72,47 @@ else
 			return false
 		end
 	end
+
+	function casino.pay_user( name, amount )
+		if not money.accounts[name] or money.accounts[name].money then
+			return false
+		end
+		money.set_money( name, money.accounts[name].money + amount )
+		return true
+	end
 end
 
+-- Some things that the other mods can access
 
--- chipcoin related
-
-casino.accounts = {}
+casino.mod_data = {}
 
 function casino.save_data( )
-	-- always overwrite existing file
-	local account_file = io.open( minetest.get_worldpath()..casino.sep..'casino_accounts', 'w' )
-	if account_file then
-		account_file:write( minetest.serialize( casino.accounts ) )
-		account_file:close()
+	local data_file = io.open( minetest.get_worldpath()..casino.sep..'casino_data', 'w' )
+	if not data_file then
+		minetest.log( 'error', '[casino] Could not open file in order to save data. All not saved data may be lost' )
+		return
+	end
+	data_file:write( minetest.serialize( casino.mod_data ) )
+	data_file:close()
+end
+
+function casino.get_data( )
+	local data_file = io.open( minetest.get_worldpath()..casino.sep..'casino_data', 'r' )
+	if not data_file then
+		minetest.log( 'error', '[casino] Could not open file in order to load data. No data will be available.' )
+		return
+	end
+	local data = minetest.deserialize( data_file:read( '*all' ) )
+	if type( data ) == type( {} ) then
+		casino.mod_data = data
 	else
-		minetest.log( 'error' , '[casino] Was not able to save user data...' )
+		minetest.log( 'error' , '[casino] Data returned by file <'..minetest.get_worldpath()..casino.sep..'casino_data'..'> fits not expected format' )
+		casino.mod_data = {}
+		return
 	end
 end
 
-function casino.load_data( )
-	local account_file = io.open( minetest.get_worldpath()..casino.sep..'casino_accounts', 'r' )
-	if account_file then
-		local temp_account_data = minetest.deserialize( account_file:read('*all') )
-		if temp_account_data and type( temp_account_data ) == type( {} ) then
-			casino.accounts = temp_account_data
-		else
-			minetest.log( 'info', '[casino] Could not read existin account file. Creating new' )
-		end
-	else
-		minetest.log( 'info' , '[casino] Account file does not exist or cannot be opened. Creating new' )
-	end
-end
-
-function casino.charge_player( name, amount )
-	local return_bool = nil
-	if casino.accounts[name] and casino.accounts[name] >= amount then
-		casino.accounts[name] = casino.accounts[name] - amount
-		return_bool = true
-	else
-		return_bool = false
-	end
-	casino.save_data()
-end
-
-function casino.pay_player( name, amount )
-	local return_bool = nil
-	if casino.accounts[name] then
-		casino.accounts[name] = casino.accounts[name] + amount
-		return_bool = true
-	else
-		return_bool = false
-	end
-	casino.save_data()
-end
-
-function casino.player_coins( name )
-	if casino.accounts[name] then
-		return casino.accounts[name]
-	else
-		return false
-	end
-end
-
-function casino.new_player( name )
-	if not casino.accounts[name] then
-		casino.accounts[name] = casino.initial_coins
-		casino.save_data()
-	end
-end
-
+casino.get_data()
 
 -- test suite
 dofile( minetest.get_modpath( 'casino' )..casino.sep..'lotto.lua' )

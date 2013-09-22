@@ -15,18 +15,71 @@ it payed even if you are online is no longer implemented.
 Instead the user is forced to carry the fitting ticket to a
 second machine which will then pay the amount the user has
 won.
+
+Note:
+The following is for somebody who wants to work on this (and
+for me to remember what i am doing here. It needs a lot of
+iterations, maybe i should change this into something
+more comfortable to work with.
+
+player_register table structur
+
+player_register = {
+	player_name = {
+		last_login = [os.time() value],
+		1(index) = {
+			session_id = [session_id number],
+			tickets = {
+				1(index) = [number],
+				2(index) = [number],
+				3(index) = [number],
+				4(index) = [number]
+				},
+			},
+		2(index) = {
+			session_id = [session_id number],
+			tickets = {
+				1(index) = [number],
+				2(index) = [number],
+				3(index) = [number],
+				4(index) = [number]
+				},
+			},
+		3(index) = {
+			session_id = [session_id number],
+			tickets = {
+				1(index) = [number],
+				2(index) = [number],
+				3(index) = [number],
+				4(index) = [number]
+				},
+			},
+	},
+}
+
+win_register table structur
+
+win_register = {
+	1(index) = {
+		session_id = [session_id number],
+		jackpot_per_person = [jackpot divided by winners],
+		remaining_pays = [number],
+		},
+	2(index) = {
+		session_id = [session_id number],
+		jackpot_per_person = [jackpot divided by winners],
+		remaining_pays = [number],
+		},
+}
 ]]
 
--- version: 70409
+-- version: 139529 (00022109)
 
 lotto = {}
-lotto.settings = {}
 
 -- price setting (in credits)
 
 lotto.ticket_price = 200
-
-lotto.settings.jackpot = 0 -- never touch this! except you want a base amount from nowhere
 
 --[[
 the following value will decrease the amount of the jackpot by this amount ( in percent ). This will take some credits out of the
@@ -47,6 +100,22 @@ lotto.max_number = 1000
 lotto.max_ticket_per_user = 4
 
 --[[
+lotto.max_stored_sessions indicates how many sessions (including the current one) are stored for the winning numbers.
+The default is 3, therefore we only store 3 winnumber/session_id combinations once a time. With the default
+timespan (7 days), the user has 3 weeks to get his price before it vanishes.
+]]
+
+lotto.max_stored_sessions = 3
+
+--[[
+The following setting is very sensitive. It will be included in the eChat mod also. It shows the time until a user gets deleted from the
+register to keep the table clean. Otherwise, this mod would slowly fed up with user data from users, that log in once and never come back.
+Not the case we want (since it is kind of a memory leak).
+]]
+
+lotto.user_time_before_delete = 90 -- count as days (90 days, about 3 months should be a nice value)
+
+--[[
 ToDo:
 Add some kind of builtin informer, in case of missing chatplus
 or eChat mod(s).
@@ -54,7 +123,7 @@ or eChat mod(s).
 if minetest.get_modpath( 'chatplus' ) then
 	function lotto.inform_winner( name , amount )
 		if chatplus.players[name] then
-			table.insert( chatplus.players[name].messages , '[Lotto] Congratulations. You won the incredible amount of '..amount..'cr!' )
+			table.insert( chatplus.players[name].messages , '[Lotto] Congratulations. You won the incredible amount of '..amount..'cr! Go to a Lotto Price machine to get your money!' )
 			chatplus.save()
 		else
 			minetest.log( 'error', '[lotto] For some reason, the player '..name..' could not be found in the chatplus data.' )
@@ -63,79 +132,81 @@ if minetest.get_modpath( 'chatplus' ) then
 elseif minetest.get_modpath( 'echat' ) then
 	function lotto.inform_winner( name, amount )
 		if eChat.players[name] then
-			table.insert( eChat.players[name].messages, '[Lotto] Congratulations. You won the incredible amount of '..amount..'cr!' )
+			table.insert( eChat.players[name].messages, '[Lotto] Congratulations. You won the incredible amount of '..amount..'cr! Go to a Lotto Price machine to get your money!' )
 			table.insert( eChat.players.update_list, name )
 			eChat.save()
 		else
 			minetest.log( 'error' , '[lotto] For some reason, the player '..name..' could not be found in the eChat data.' )
 		end
 	end
-end
-
--- system
-
-function lotto.save_settings( )
-	local settings_file = io.open( minetest.get_worldpath()..casino.sep..'lotto_settings', 'w' )
-	if not settings_file then
-		minetest.log( 'error', '[lotto] could not open file to save data.' )
+else
+	function lotto.inform_winner( name, amount )
+		-- ToDO: Add a replacement function here
+		minetest.chat_send_all( '[lotto] Congratulations '..name..', you won '..amount..'cr! Please go to a Price machine to get your money!' )
 		return
-	end
-	settings_file:write( minetest.serialize( lotto.settings ) )
-	settings_file:close()
-end
-
--- get the last saved session ID and player registrations
-
-function lotto.get_settings( )
-	local settings_file = io.open( minetest.get_worldpath()..casino.sep..'lotto_settings' , 'r' )
-	if not settings_file then
-		minetest.log( 'info' , '[lotto] Was not able to open settings file. Building new.' )
-		lotto.settings = {}
-		lotto.settings.player_register = {}
-		lotto.settings.session_id = nil
-		lotto.generate_session_id()
-		lotto.settings.start_date = os.date('*t')
-		lotto.settings.end_date = os.date('*t', os.time() + ( ( ( lotto.timespan * 24 ) * 60 ) * 60 ) )
-		lotto.save_settings()
-	else
-		local temp_data = minetest.deserialize( settings_file:read('*all') )
-		if type( temp_data ) ~= type( {} ) then
-			minetest.log( 'debug' , '[lotto] After minetest.deserialize(), returned data is not fitting expected format.')
-			lotto.settings = {}
-			lotto.settings.player_register = {}
-			lotto.settings.start_date = os.date('*t')
-			lotto.settings.end_date = os.date('*t', os.time() + ( ( ( lotto.timespan * 24 ) * 60 ) * 60 ) )
-			lotto.generate_session_id()
-			lotto.save_settings()
-		end
-		lotto.settings = temp_data
 	end
 end
 
 function lotto.init()
-	lotto.get_settings()
-	-- make a check if our timespan is over
-	lotto.check_date()
-
+	if not casino.mod_data.lotto then
+		-- something went wrong with the data, or its the first init, create new
+		casino.mod_data.lotto = {}
+		casino.mod_data.lotto.jackpot = 0
+		casino.mod_data.lotto.session_id = lotto.generate_session_id()
+		casino.mod_data.lotto.start_date = os.time()
+		casino.mod_data.lotto.end_date = ( ( ( lotto.timespan * 24 ) * 60 ) * 60 ) + os.time()
+		casino.mod_data.lotto.player_register = {}
+		casino.mod_data.lotto.win_register = {}
+		casino.save_data( )
+		minetest.log( 'debug' , '[lotto] Has been initialized for the first time or after an error with non-existent data' )
+		return
+	end
+	-- make a check if our timespan is over after initiliazing all other mods
+	minetest.after( 15 , lotto.check_date )
+	-- here goes the major cleanup of the player_register table
+	local date = os.time()
+	local index = 1
+	for player_name, data_ref in pairs( casino.mod_data.lotto.player_register ) do
+		if os.difftime( date , data_ref.last_login ) >= ( ( lotto.user_time_before_delete * 24 ) * 60 ) * 60 then
+			table.remove( casino.mod_data.lotto.player_register, index )
+			minetest.log( 'action', '[lotto] Player '..player_name..' has been deleted from active register' )
+			casino.save_data()
+		end
+		index = index + 1
+	end
+	minetest.log( 'debug' , '[lotto] Has been initialized' )
 end
 
 function lotto.check_date( )
-	local today = os.date('*t')
-	if today.day >= lotto.end_date.day or ( today.day < lotto.end_date.day and today.month > lotto.end_date.month ) or
-		( ( today.day < lotto.end_date.day and today.month < lotto.end_date.month ) and today.year > lotto.end_date.year ) then
-		-- looks like time is over
+	local today = os.time()
+	if today >= casino.mod_data.lotto.end_date then
 		local win_number = lotto.choose_win_number()
 		local temp_winners = {}
-		for index, user in pairs( lotto.settings.player_register[lotto.settings.session_id] ) do
-			if user[win_number] then
-				table.insert( temp_winners, index )
+		for player_name, data_ref in pairs( casino.mod_data.lotto.player_register ) do
+			if data_ref.session_id == casino.mod_data.lotto.session_id then
+				for index, ticket_number in pairs( data_ref.tickets ) do
+					if ticket_number == win_number then
+						-- looks like we have a winner
+						table.insert( temp_winners, player_name )
+					end
+				end
 			end
 		end
-		local amount_per_user = lotto
-
-
-
--- end of system
+		if #temp_winners ~= 0 then
+			-- we have at least one winner
+			local jackpot_divided_by_winners = math.floor( casino.mod_data.lotto.jackpot / #temp_winners )
+			for index, player_name in pairs( temp_winners ) do
+				lotto.inform_winner( player_name, jackpot_divided_by_winners )
+			end
+			if #casino.mod_data.lotto.win_register == 3 then
+				table.remove( casino.mod_data.lotto.win_register, 1 )
+			end
+			table.insert( casino.mod_data.lotto.win_register, { session_id = casino.mod_data.lotto.session_id, jackpot_pp = jackpot_divided_by_winners, remaining_pays = #temp_winners } )
+			casino.mod_data.lotto.jackpot = 0
+			casino.save_data()
+		end
+	end
+end
 
 function lotto.generate_session_id( )
 	-- we make a simple number out of the date plus the timespan
@@ -147,13 +218,12 @@ function lotto.generate_session_id( )
 		timespan_end.day..''..timespan_end.month
 	session_id = tonumber( session_id )
 	if not session_id then
-		-- fail safe part, will be deleted once considered useless
+		-- fail part, will be deleted once considered useless
 		minetest.log( 'error', '[lotto] Internal Error. Could not format session string into number' )
 		return nil
 	end
-	lotto.settings.session_id = session_id
-	lotto.save_settings()
 	print( 'Generated Current ID: '..session_id )
+	return session_id
 end
 
 function lotto.choose_win_number( )
@@ -170,111 +240,17 @@ function lotto.choose_win_number( )
 	return first_level_numbers[math.random(1,4)]
 end
 
--- our ticket machine
-
-local formspec_buy_menu = "size[8,5]"..
-	"label[1,0;Please insert a number you want for your ticket]"..
-	"field[1,1;6,1;number_input;;]"..
-	"button[1,2;6,1;proceed_button;Buy ticket ("..lotto.ticket_price.."cr)]"..
-	"button_exit[1,3;6,1;cancel_button;Cancel"
-
-local formspec_buy_error_menu = 'size[8,5]'..
-	'label[1,0;Sorry but i need a number not something else]'..
-	'field[1,1;6,1;number_input;;]'..
-	'button[1,2;6,1;proceed_button;Buy ticket ('..lotto.ticket_price..'cr)]'..
-	'button_exit[1,3;6,1;cancel_button;Cancel'
-
-
-local machine_def = {
-	drawtype = 'normal',
-	tiles = {
-		'default_chest_top.png',
-		'default_chest_top.png',
-		'default_chest_side.png',
-		'default_chest_side.png',
-		'default_chest_side.png',
-		'default_chest_front.png' },
-	paramtype2 = "facedir",
-	on_punch = function( pos, node, puncher )
-		local player_name = nil
-		if type( puncher ) ~= type( '' ) then
-			-- should be a reference
-			player_name = puncher:get_player_name()
-		else
-			player_name = puncher
-		end
-		minetest.show_formspec( player_name, 'casino:ticket_machine', formspec_buy_menu )
-	end
-	}
-minetest.register_node( 'casino:ticket_machine', machine_def )
-
-minetest.register_on_player_receive_fields( function( player, formname, fields )
-	local player_name = nil
-	if type( player ) ~= type( '' ) then
-		player_name = player:get_player_name()
-	else
-		player_name = player
-	end
-	-- better do a check at this point, to prevend buying a ticket with the old ID
-	lotto.check_date()
-	-- end
-	local player_check_number = tonumber( fields.number_input )
-	if not player_check_number and not fields.cancel_button then
-		minetest.show_formspec( player_name, 'casino:ticket_machine', formspec_buy_error_menu )
-	elseif player_check_number and not fields.cancel_button then
-		local PlayerInv = player:get_inventory()
-		local ticketStack = ItemStack( 'casino:lotto_ticket 1' )
-		local itemRef = ticketStack:to_table()
-		local tmp_meta = parse_item_meta( itemRef['metadata'] )
-		tmp_meta['session_id'] = lotto.settings.session_id
-		tmp_meta['user_number'] = player_check_number
-		itemRef['metadata'] = save_item_meta( tmp_meta )
-		ticketStack:replace( itemRef )
-		if PlayerInv:room_for_item( 'main', ticketStack ) then
-			PlayerInv:add_item( 'main', ticketStack )
-			minetest.show_formspec( player_name, 'casino:ticket_machine', 'size[8,5]label[1,0;You just bought ticket no: '..player_check_number..']' )
-		else
-			minetest.show_formspec( player_name, 'casino:ticket_machine', 'size[8,5]label[1,0;You have no free inventory slot. Buy request canceled]' )
-		end
+minetest.register_on_joinplayer( function( player_ref )
+	-- To keep our register as clean as possible
+	local player_name = player_ref:get_player_name()
+	if casino.mod_data.lotto.player_register[player_name] then
+		local date_data = os.time()
+		casino.mod_data.lotto.player_register[player_name].last_login = date_data
 	end
 end )
-
--- the ticket item definition
-
-minetest.register_tool("casino:lotto_ticket", {
-	description = "Lotto ticket",
-	visual_scale = 1.0,
-	inventory_image = "casino_ticket.png",
-	on_use = function( itemstack, user, pointed_thing )
-		local itemRef = itemstack:to_table()
-		local tmp_meta = parse_item_meta( itemRef['metadata'] )
-		local session_id = tmp_meta['session_id']
-		local user_number = tmp_meta['user_number']
-		minetest.chat_send_player( user:get_player_name(), 'Ticket has ID '..user_number..' from session '..session_id )
-		return nil
-	end,
-})
-
-
--- helper functions for meta access
---[[
-Credits for this code goes to RealBadAngel and is copied
-from his repo:
-github.com/RealBadAngel/technic
-]]
-
-function parse_item_meta( StackRef )
-	if string.find( StackRef, 'return {' ) then
-		return minetest.deserialize( StackRef )
-	else return {}
-	end
-end
-
-function save_item_meta( MetaRef )
-	return minetest.serialize( MetaRef )
-end
 
 
 -- Init everything!
 
-lotto.get_settings()
+dofile( minetest.get_modpath( 'casino' )..casino.sep..'lotto_machines.lua' )
+lotto.init()

@@ -28,20 +28,23 @@ lotto.TMMTErrorForm = 'size[8,5]label[1,0;You cannot buy anymore tickets (maximu
 
 lotto.TMFIErrorForm = 'size[8,5]label[1,0;You have no free inventory slot. Buy request canceled]'
 
+lotto.TMPMErrorForm = 'size[8,5]label[1,0;Sorry, but you don\'t have enough money.]'
+
 lotto.TMSBForm = 'size[8,5]label[1,0;Thank you for using our service. Hope to see you soon again.]'
 
 
-local machine_def = {
+local ticket_machine_def = {
 	drawtype = 'normal',
 	tiles = {
-		'default_chest_top.png',
-		'default_chest_top.png',
-		'default_chest_side.png',
-		'default_chest_side.png',
-		'default_chest_side.png',
-		'default_chest_front.png' },
+		'casino_ticket_top.png',
+		'casino_ticket_top.png',
+		'casino_general_side.png',
+		'casino_general_side.png',
+		'casino_general_side.png',
+		'casino_ticket_front.png' },
 	paramtype2 = "facedir",
-	on_punch = function( pos, node, puncher )
+	groups = {choppy=2,oddly_breakable_by_hand=2},
+	on_rightclick = function( pos, node, puncher )
 		local player_name = nil
 		if type( puncher ) ~= type( '' ) then
 			-- should be a reference
@@ -50,6 +53,51 @@ local machine_def = {
 			player_name = puncher
 		end
 		minetest.show_formspec( player_name, 'casino:ticket_machine', lotto.TMBuyForm )
+	end,
+	}
+
+local price_machine_def = {
+	drawtype = 'normal',
+	tiles = {
+		'casino_price_top.png',
+		'casino_price_top.png',
+		'casino_general_side.png',
+		'casino_general_side.png',
+		'casino_general_side.png',
+		'casino_price_front.png' },
+	paramtype2 = "facedir",
+	groups = {choppy=2,oddly_breakable_by_hand=2},
+	on_rightclick = function( pos, node, puncher, itemstack )
+		local player_name = nil
+		if type( puncher ) ~= type( '' ) then
+			-- should be a reference
+			player_name = puncher:get_player_name()
+		else
+			player_name = puncher
+		end
+		local itemRef = itemstack:to_table()
+		if not itemRef then
+			return
+		end
+		local temp_meta = parse_item_meta( itemRef['metadata'] )
+		if temp_meta['--used--'] then
+			minetest.chat_send_player( player_name, '[lotto] You already used this ticket...' )
+			return
+		end
+		for index, value in pairs( casino.mod_data.lotto.win_register ) do
+			if temp_meta['session_id'] == value.session_id then
+				if temp_meta['user_number'] == value.jp_number then
+					-- we have a lucky winner here
+					casino.pay_user( player_name, value.jackpot_pp )
+					casino.mod_data.lotto.win_register[index].remaining_pays = casino.mod_data.lotto.win_register[index].remaining_pays - 1
+					casino.save_data()
+					temp_meta['--used--'] = true
+					itemRef['metadata'] = save_item_meta( temp_meta )
+					return itemstack
+				end
+			end
+		end
+		minetest.chat_send_player( player_name, '[lotto] Sorry, but seems to be wrong session_id/win number combination' )
 	end,
 	}
 
@@ -97,8 +145,8 @@ function lotto.ticket_machine_routine( player, formname, fields )
 			player_reg = casino.mod_data.lotto.player_register[player_name]
 			g_data = player_reg[#player_reg]
 		end
-		if #g_data.tickets == lotto.max_ticket_per_user + 1 then
-			minetset.show_formspec( player_name, 'casino:ticket_machine', lotto.TMMTErrorForm )
+		if #g_data.tickets >= lotto.max_ticket_per_user then
+			minetest.show_formspec( player_name, 'casino:ticket_machine', lotto.TMMTErrorForm )
 			return
 		end
 		if #g_data == lotto.max_stored_sessions + 1 then
@@ -122,7 +170,11 @@ function lotto.ticket_machine_routine( player, formname, fields )
 			minetest.show_formspec( player_name, 'casino:ticket_machine', lotto.TMFIErrorForm )
 			return
 		end
-
+		if not casino.charge_user( player_name, lotto.ticket_price ) then
+			minetest.show_formspec( player_name, 'casino:ticket_machine', lotto.TMPMErrorForm )
+			return
+		end
+		casino.mod_data.lotto.jackpot = casino.mod_data.lotto.jackpot + lotto.ticket_price
 		local ticketStack = ItemStack( 'casino:lotto_ticket 1' )
 		local itemRef = ticketStack:to_table()
 		local tmp_meta = parse_item_meta( itemRef['metadata'] )
@@ -134,7 +186,6 @@ function lotto.ticket_machine_routine( player, formname, fields )
 		table.insert( casino.mod_data.lotto.player_register[player_name][#casino.mod_data.lotto.player_register[player_name]].tickets, player_check_number )
 		casino.save_data()
 		PlayerInv:add_item( 'main', ticketStack )
-		casino.charge_user( player_name, lotto.ticket_price )
 		minetest.show_formspec( player_name, 'casino:ticket_machine', lotto.TMSBForm )
 	end
 end
@@ -153,7 +204,9 @@ minetest.register_tool("casino:lotto_ticket", {
 	end,
 })
 
-minetest.register_node( 'casino:ticket_machine', machine_def )
+minetest.register_node( 'casino:ticket_machine', ticket_machine_def )
+
+minetest.register_node( 'casino:price_machine', price_machine_def )
 
 minetest.register_on_player_receive_fields( lotto.ticket_machine_routine )
 

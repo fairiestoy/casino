@@ -174,37 +174,45 @@ function lotto.init()
 		end
 		index = index + 1
 	end
+	print( '::DEBUG:: [lotto] has been initialized' )
 	minetest.log( 'debug' , '[lotto] Has been initialized' )
 end
 
 function lotto.check_date( )
 	local today = os.time()
+	local temp_winners = {}
 	if today >= casino.mod_data.lotto.end_date then
 		local win_number = lotto.choose_win_number()
-		local temp_winners = {}
 		for player_name, data_ref in pairs( casino.mod_data.lotto.player_register ) do
-			if data_ref.session_id == casino.mod_data.lotto.session_id then
-				for index, ticket_number in pairs( data_ref.tickets ) do
-					if ticket_number == win_number then
-						-- looks like we have a winner
-						table.insert( temp_winners, player_name )
+			for index, player_data in pairs( data_ref ) do
+				if index ~= 'last_login' then
+					if player_data.session_id == casino.mod_data.lotto.session_id then
+						for index, ticket_number in pairs( player_data.tickets ) do
+							if ticket_number == win_number then
+								-- looks like we have a winner
+								table.insert( temp_winners, player_name )
+							end
+						end
 					end
 				end
 			end
 		end
 		if #temp_winners ~= 0 then
 			-- we have at least one winner
-			local jackpot_divided_by_winners = math.floor( casino.mod_data.lotto.jackpot / #temp_winners )
+			local jackpot_divided_by_winners = math.floor( ( casino.mod_data.lotto.jackpot - ( ( casino.mod_data.lotto.jackpot / 100 ) * lotto.managing_cost ) )  / #temp_winners )
 			for index, player_name in pairs( temp_winners ) do
 				lotto.inform_winner( player_name, jackpot_divided_by_winners )
 			end
 			if #casino.mod_data.lotto.win_register == 3 then
 				table.remove( casino.mod_data.lotto.win_register, 1 )
 			end
-			table.insert( casino.mod_data.lotto.win_register, { session_id = casino.mod_data.lotto.session_id, jackpot_pp = jackpot_divided_by_winners, remaining_pays = #temp_winners } )
+			table.insert( casino.mod_data.lotto.win_register, { jp_number = win_number, session_id = casino.mod_data.lotto.session_id, jackpot_pp = jackpot_divided_by_winners, remaining_pays = #temp_winners } )
 			casino.mod_data.lotto.jackpot = 0
-			casino.save_data()
 		end
+		casino.mod_data.lotto.session_id = lotto.generate_session_id()
+		casino.mod_data.lotto.start_date = os.time()
+		casino.mod_data.lotto.end_date = ( ( ( lotto.timespan * 24 ) * 60 ) * 60 ) + os.time()
+		casino.save_data()
 	end
 end
 
